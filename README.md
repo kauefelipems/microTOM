@@ -1,2 +1,2 @@
 # µTOM
-Firmware for microTOM EIT Board
+Firmware for µTOM EIT Board
