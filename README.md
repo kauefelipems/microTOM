@@ -1,2 +1,2 @@
-# microTOM
+# µTOM
 Firmware for microTOM EIT Board
