@@ -44,7 +44,6 @@ TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart2;
 
-
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -57,17 +56,26 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 
+//Machine Constants
+#define N_CHANNELS 16
+#define FREQUENCY 10000
+#define	AMPLITUDE 1.5
+#define MIN_GAIN 0
+#define MAX_GAIN 1.1
+
 //Interface Commands
 unsigned char comm[2]; 								//command
 uint16_t comm_size = sizeof(comm)/sizeof(comm[0]);  //vector size
 uint32_t usart_timeout = 1000;						//ms
+HAL_StatusTypeDef usart_status;						//check status of USART
 
 //Machine Values
 unsigned char channel_val;
 unsigned char gain_val;
 
 //Voltage Measurements
-float data_meas[256]; //USART SEND
+uint16_t data_meas[500]; 									  //USART SEND
+uint16_t data_size = sizeof(data_meas)/sizeof(data_meas[0]);  //vector size
 
 /* State Machine ---------------------------------------------------------------*/
 
@@ -152,7 +160,18 @@ int main(void)
   * @retval Next Action: go_g, go_ch, go_meas, repeat, fail
   */
 static uint8_t comm_wait_state(void){
-
+	usart_status = HAL_UART_Receive(huart2, comm, comm_size, usart_timeout);
+	switch (usart_status){
+		case HAL_OK:
+			switch(comm[0]){
+			case 'g': return go_g;
+			case 'c': return go_ch;
+			case 'm': return go_meas;
+			default: fail;
+			}
+		case HAL_BUSY: return repeat;
+		case HAL_TIMEOUT: return repeat;
+	}
 }
 
 /**
@@ -160,7 +179,11 @@ static uint8_t comm_wait_state(void){
   * @retval Next Action: OK, repeat, fail
   */
 static uint8_t g_sel_state(void){
+	uint8_t gain = comm[1];
 
+	return ok;
+	return repeat;
+	return fail;
 }
 
 /**
@@ -168,7 +191,11 @@ static uint8_t g_sel_state(void){
   * @retval Next Action: OK, repeat, fail
   */
 static uint8_t ch_sel_state(void){
+	uint8_t channel = comm[1] % N_CHANNELS;
 
+	return ok;
+	return repeat;
+	return fail;
 }
 
 /**
@@ -177,6 +204,11 @@ static uint8_t ch_sel_state(void){
   */
 static uint8_t meas_state(void){
 
+	usart_status = HAL_UART_Transmit(huart2, data_meas, data_size, usart_timeout);
+
+	return ok;
+	return repeat;
+	return fail;
 }
 
 /**
@@ -185,6 +217,9 @@ static uint8_t meas_state(void){
   */
 static uint8_t error_state(void){
 
+	return ok;
+	return repeat;
+	return fail;
 }
 
 /*State Machine Functions END------------------------------------------------------------------------------*/
