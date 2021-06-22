@@ -1,14 +1,4 @@
 /* USER CODE BEGIN Header */
-
-/**
-  ******************************************************************************
-  *Firmware: μTOM EIT System
-  *Author: Kaue Felipe Morcelles
-  *Version: Alpha
-  *Year: 2021
-  ******************************************************************************
- */
-
 /**
   ******************************************************************************
   * @file           : main.c
@@ -26,12 +16,31 @@
   *
   ******************************************************************************
   */
-
-
+/* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <stdio.h>
 
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+#include <stdio.h>
+#include "state_machine.h"
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc3;
@@ -43,6 +52,12 @@ DMA_HandleTypeDef hdma_dac1_ch1;
 TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -53,21 +68,24 @@ static void MX_DAC1_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART2_UART_Init(void);
 
+/* USER CODE BEGIN PFP */
+
+// State Functions BEGIN
+Actions_TypeDef comm_wait_state(void);
+Actions_TypeDef g_sel_state(void);
+Actions_TypeDef ch_sel_state(void);
+Actions_TypeDef meas_state(void);
+Actions_TypeDef error_state(void);
+// State Functions END
+
+/* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
-
-//Machine Constants
-#define N_CHANNELS 16
-#define FREQUENCY 10000
-#define	AMPLITUDE 1.5
-#define MIN_GAIN 0
-#define MAX_GAIN 1.1
+/* USER CODE BEGIN 0 */
 
 //Interface Commands
 unsigned char comm[2]; 								//command
 uint16_t comm_size = sizeof(comm)/sizeof(comm[0]);  //vector size
-uint32_t usart_timeout = 1000;						//ms
-HAL_StatusTypeDef usart_status;						//check status of USART
 
 //Machine Values
 unsigned char channel_val;
@@ -77,35 +95,10 @@ unsigned char gain_val;
 uint16_t data_meas[500]; 									  //USART SEND
 uint16_t data_size = sizeof(data_meas)/sizeof(data_meas[0]);  //vector size
 
-/* State Machine ---------------------------------------------------------------*/
+//State Function Pointer (need to be synchronized with States_TypeDef)
+State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state};
 
-//Functions
-static uint8_t comm_wait_state(void);
-static uint8_t g_sel_state(void);
-static uint8_t ch_sel_state(void);
-static uint8_t meas_state(void);
-static uint8_t error_state(void);
-
-static uint8_t get_transition(int st, int ac);
-
-//Variables
-uint8_t (*state_func_ptr[])(void) = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state};
-enum state_names {wait_code, g_sel, ch_sel, measuring, error_msg}; //code names for states
-enum actions {go_g, go_ch, go_meas, ok, repeat, fail};//transition action
-uint8_t n_actions = 6;
-
-uint8_t state_transition[][n_actions] = { //possible transitions of the SM
-	 /* [current state] -> action {go_g, 	  go_ch,     go_meas,   OK,        repeat,    fail}*/
-		[wait_code] 	   = 	  {g_sel,     ch_sel,    measuring, wait_code, wait_code, error_msg},
-		[g_sel] 	   	   = 	  {error_msg, error_msg, error_msg, wait_code, g_sel,     error_msg},
-		[ch_sel] 	       = 	  {error_msg, error_msg, error_msg, wait_code, wait_code, error_msg},
-		[measuring] 	   = 	  {error_msg, error_msg, error_msg, wait_code, wait_code, error_msg},
-		[error_msg] 	   = 	  {error_msg, error_msg, error_msg, wait_code, error_msg, error_msg},
-};
-
-#define ENTRY_STATE wait_code /*defines entry state (allows for further change without
-								modifying the main())*/
-
+/* USER CODE END 0 */
 
 /**
   * @brief  The application entry point.
@@ -113,16 +106,25 @@ uint8_t state_transition[][n_actions] = { //possible transitions of the SM
   */
 int main(void)
 {
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
 
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
@@ -131,98 +133,29 @@ int main(void)
   MX_DAC1_Init();
   MX_TIM8_Init();
   MX_USART2_UART_Init();
+  /* USER CODE BEGIN 2 */
 
+  // State Machine Variables:
+  States_TypeDef state = ENTRY_STATE;
+  Actions_TypeDef action;
+  State_FunctionsTypeDef state_func;
+
+  /* USER CODE END 2 */
 
   /* Infinite loop */
-
-  /* State Machine: ----------------------------------------------------------*/
-  enum state_names state = ENTRY_STATE;
-  enum actions action;
-  uint8_t (*state_func)(void);
-
-  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  /* State Machine Loop: ------------------------------------------------*/
+    /* USER CODE END WHILE */
+	/* State Machine Loop:*/
+	state_func = state_func_ptr[state];
+	action = state_func();
+	state = ST_nextstate(state, action);
 
-	  state_func = state_func_ptr[state];
-	  action = state_func();
-	  state = state_transition[state][action];
-
+    /* USER CODE BEGIN 3 */
   }
-
+  /* USER CODE END 3 */
 }
-
-/*State Machine Functions BEGIN------------------------------------------------------------------------------*/
-
-/**
-  * @brief Wait for Serial Command from the Interface
-  * @retval Next Action: go_g, go_ch, go_meas, repeat, fail
-  */
-static uint8_t comm_wait_state(void){
-	usart_status = HAL_UART_Receive(huart2, comm, comm_size, usart_timeout);
-	switch (usart_status){
-		case HAL_OK:
-			switch(comm[0]){
-			case 'g': return go_g;
-			case 'c': return go_ch;
-			case 'm': return go_meas;
-			default: fail;
-			}
-		case HAL_BUSY: return repeat;
-		case HAL_TIMEOUT: return repeat;
-	}
-}
-
-/**
-  * @brief Change Gain of the PGA
-  * @retval Next Action: OK, repeat, fail
-  */
-static uint8_t g_sel_state(void){
-	uint8_t gain = comm[1];
-
-	return ok;
-	return repeat;
-	return fail;
-}
-
-/**
-  * @brief Change Measurement Channel
-  * @retval Next Action: OK, repeat, fail
-  */
-static uint8_t ch_sel_state(void){
-	uint8_t channel = comm[1] % N_CHANNELS;
-
-	return ok;
-	return repeat;
-	return fail;
-}
-
-/**
-  * @brief Starts and Manages One Measurement
-  * @retval Next Action: OK, repeat, fail
-  */
-static uint8_t meas_state(void){
-
-	usart_status = HAL_UART_Transmit(huart2, data_meas, data_size, usart_timeout);
-
-	return ok;
-	return repeat;
-	return fail;
-}
-
-/**
-  * @brief Handles and Informs Errors
-  * @retval Next Action - OK, repeat
-  */
-static uint8_t error_state(void){
-
-	return ok;
-	return repeat;
-	return fail;
-}
-
-/*State Machine Functions END------------------------------------------------------------------------------*/
 
 /**
   * @brief System Clock Configuration
@@ -237,13 +170,13 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL2;
-  RCC_OscInitStruct.PLL.PREDIV = RCC_PREDIV_DIV1;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+  RCC_OscInitStruct.PLL.PREDIV = RCC_PREDIV_DIV4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -252,24 +185,25 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_TIM8
                               |RCC_PERIPHCLK_ADC34;
-  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
+  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_SYSCLK;
   PeriphClkInit.Adc34ClockSelection = RCC_ADC34PLLCLK_DIV1;
   PeriphClkInit.Tim8ClockSelection = RCC_TIM8CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
+  HAL_RCC_MCOConfig(RCC_MCO, RCC_MCO1SOURCE_SYSCLK, RCC_MCODIV_1);
 }
 
 /**
@@ -473,7 +407,7 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 230400;
-  huart2.Init.WordLength = UART_WORDLENGTH_7B;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
   huart2.Init.Mode = UART_MODE_TX_RX;
@@ -505,6 +439,12 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel3_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
+  /* DMA1_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+  /* DMA1_Channel7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
   /* DMA2_Channel5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Channel5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Channel5_IRQn);
@@ -521,6 +461,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
@@ -556,10 +497,78 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PA8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF0_TRACE;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
+// State Functions BEGIN
 
+/**
+  * @brief Wait for Serial Command from the Interface
+  * @retval Next Action: go_g, go_ch, go_meas, repeat, fail
+  */
+Actions_TypeDef comm_wait_state(void){
+
+	return go_g;
+	return go_ch;
+	return go_meas;
+	return fail;
+
+}
+
+/**
+  * @brief Change Gain of the PGA
+  * @retval Next Action: OK, repeat, fail
+  */
+Actions_TypeDef g_sel_state(void){
+
+	return ok;
+	return repeat;
+	return fail;
+}
+
+/**
+  * @brief Change Measurement Channel
+  * @retval Next Action: OK, repeat, fail
+  */
+Actions_TypeDef ch_sel_state(void){
+
+	return ok;
+	return repeat;
+	return fail;
+}
+
+/**
+  * @brief Starts and Manages One Measurement
+  * @retval Next Action: OK, repeat, fail
+  */
+Actions_TypeDef meas_state(void){
+
+
+	return ok;
+	return repeat;
+	return fail;
+}
+
+/**
+  * @brief Handles and Informs Errors
+  * @retval Next Action - OK, repeat
+  */
+Actions_TypeDef error_state(void){
+
+	return ok;
+	return repeat;
+	return fail;
+}
+
+// State Functions END
 /* USER CODE END 4 */
 
  /**

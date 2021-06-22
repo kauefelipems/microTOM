@@ -38,10 +38,26 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
+typedef uint8_t (*State_FunctionsTypeDef)(void);
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
+
+//Machine Constants
+#define N_CHANNELS 16
+#define FREQUENCY 10000
+#define	AMPLITUDE 1.5
+#define MIN_GAIN 0
+#define MAX_GAIN 1.1
+
+//USART Constants
+#define USART_TIMEOUT 1000 //ms
+
+// State Machine Constant
+#define ENTRY_STATE 0 	    /*defines entry state (allows for further change without
+								modifying the main())*/
 
 /* USER CODE END EC */
 
