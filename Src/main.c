@@ -35,6 +35,28 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+//Data Buffer
+#define ADC_BUFF_SIZE 500
+
+//Communication Buffer
+#define UART_BUFF_SIZE 10
+
+//Machine Constants
+#define N_CHANNELS 16
+#define FREQUENCY 10000
+#define	AMPLITUDE 1.5
+#define MIN_GAIN 0
+#define MAX_GAIN 1.1
+
+//USART Constants
+#define USART_TIMEOUT 1000 //ms
+
+// State Machine Constant
+#define ENTRY_STATE 0 	    /*defines entry state (allows for further change without
+								modifying the main())*/
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,6 +71,7 @@ DMA_HandleTypeDef hdma_adc3;
 DAC_HandleTypeDef hdac1;
 DMA_HandleTypeDef hdma_dac1_ch1;
 
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart2;
@@ -67,7 +90,7 @@ static void MX_ADC3_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART2_UART_Init(void);
-
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 // State Functions BEGIN
@@ -84,7 +107,7 @@ Actions_TypeDef error_state(void);
 /* USER CODE BEGIN 0 */
 
 //Interface Commands
-unsigned char comm[2]; 								//command
+unsigned char comm[UART_BUFF_SIZE]; 								//command
 uint16_t comm_size = sizeof(comm)/sizeof(comm[0]);  //vector size
 
 //Machine Values
@@ -92,8 +115,8 @@ unsigned char channel_val;
 unsigned char gain_val;
 
 //Voltage Measurements
-uint16_t data_meas[500]; 									  //USART SEND
-uint16_t data_size = sizeof(data_meas)/sizeof(data_meas[0]);  //vector size
+uint16_t adc_buffer[ADC_BUFF_SIZE]; 									  //USART SEND
+uint16_t buffer_size = sizeof(adc_buffer)/sizeof(adc_buffer[0]);  //vector size
 
 //State Function Pointer (need to be synchronized with States_TypeDef)
 State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state};
@@ -133,12 +156,21 @@ int main(void)
   MX_DAC1_Init();
   MX_TIM8_Init();
   MX_USART2_UART_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
-  // State Machine Variables:
+  // Set State Machine Variables:
   States_TypeDef state = ENTRY_STATE;
   Actions_TypeDef action;
   State_FunctionsTypeDef state_func;
+
+  //ADC Calibration Function
+  if(HAL_ADCEx_Calibration_Start(&hadc3, ADC_DIFFERENTIAL_ENDED) != HAL_OK)
+	  Error_Handler();
+
+  //ADC Start (TRANSFER TO volt_vector USING DMA)
+  if(HAL_ADC_Start_DMA(&hadc3, adc_buffer, ADC_BUFF_SIZE) != HAL_OK)
+	  Error_Handler();
 
   /* USER CODE END 2 */
 
@@ -146,11 +178,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-	/* State Machine Loop:*/
 	state_func = state_func_ptr[state];
 	action = state_func();
 	state = ST_nextstate(state, action);
+    /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
@@ -195,10 +226,11 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_TIM8
-                              |RCC_PERIPHCLK_ADC34;
+                              |RCC_PERIPHCLK_ADC34|RCC_PERIPHCLK_TIM34;
   PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_SYSCLK;
   PeriphClkInit.Adc34ClockSelection = RCC_ADC34PLLCLK_DIV1;
   PeriphClkInit.Tim8ClockSelection = RCC_TIM8CLK_HCLK;
+  PeriphClkInit.Tim34ClockSelection = RCC_TIM34CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -317,6 +349,51 @@ static void MX_DAC1_Init(void)
   /* USER CODE BEGIN DAC1_Init 2 */
 
   /* USER CODE END DAC1_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 35;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_ENABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
@@ -508,8 +585,8 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-// State Functions BEGIN
 
+/* State Functions BEGIN-----------------------------------------------------------------*/
 /**
   * @brief Wait for Serial Command from the Interface
   * @retval Next Action: go_g, go_ch, go_meas, repeat, fail
@@ -551,6 +628,10 @@ Actions_TypeDef ch_sel_state(void){
   */
 Actions_TypeDef meas_state(void){
 
+	//Start TIM3 to trigger the ADC
+	if(HAL_TIM_Base_Start(&htim3) != HAL_OK)
+	  Error_Handler();
+
 
 	return ok;
 	return repeat;
@@ -562,13 +643,23 @@ Actions_TypeDef meas_state(void){
   * @retval Next Action - OK, repeat
   */
 Actions_TypeDef error_state(void){
-
+	Error_Handler();
 	return ok;
-	return repeat;
-	return fail;
+}
+/* State Functions END-----------------------------------------------------------------*/
+
+/* Callback Functions BEGIN-----------------------------------------------------------------*/
+
+//Stops TIM3 once the DMA transfer is completed (this is called by the DMA IRQ Handler)
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
+
+	if(HAL_TIM_Base_Stop(&hadc3) != HAL_OK)
+		Error_Handler();
+
 }
 
-// State Functions END
+/* Callback Functions END-----------------------------------------------------------------*/
+
 /* USER CODE END 4 */
 
  /**
