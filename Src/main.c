@@ -72,6 +72,7 @@ DAC_HandleTypeDef hdac1;
 DMA_HandleTypeDef hdma_dac1_ch1;
 
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart2;
@@ -91,6 +92,7 @@ static void MX_DAC1_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 // State Functions BEGIN
@@ -157,6 +159,7 @@ int main(void)
   MX_TIM8_Init();
   MX_USART2_UART_Init();
   MX_TIM3_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
   // Set State Machine Variables:
@@ -226,9 +229,8 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_TIM8
-                              |RCC_PERIPHCLK_ADC34|RCC_PERIPHCLK_TIM34;
+                              |RCC_PERIPHCLK_TIM34;
   PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_SYSCLK;
-  PeriphClkInit.Adc34ClockSelection = RCC_ADC34PLLCLK_DIV1;
   PeriphClkInit.Tim8ClockSelection = RCC_TIM8CLK_HCLK;
   PeriphClkInit.Tim34ClockSelection = RCC_TIM34CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -259,13 +261,13 @@ static void MX_ADC3_Init(void)
   /** Common config
   */
   hadc3.Instance = ADC3;
-  hadc3.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+  hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV1;
   hadc3.Init.Resolution = ADC_RESOLUTION_12B;
   hadc3.Init.ScanConvMode = ADC_SCAN_DISABLE;
   hadc3.Init.ContinuousConvMode = DISABLE;
   hadc3.Init.DiscontinuousConvMode = DISABLE;
-  hadc3.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc3.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc3.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc3.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
   hadc3.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc3.Init.NbrOfConversion = 1;
   hadc3.Init.DMAContinuousRequests = DISABLE;
@@ -288,7 +290,7 @@ static void MX_ADC3_Init(void)
   sConfig.Channel = ADC_CHANNEL_9;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SingleDiff = ADC_DIFFERENTIAL_ENDED;
-  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_19CYCLES_5;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
   if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
@@ -394,6 +396,51 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
 
 }
 
@@ -593,10 +640,12 @@ static void MX_GPIO_Init(void)
   */
 Actions_TypeDef comm_wait_state(void){
 
-	return go_g;
-	return go_ch;
-	return go_meas;
-	return fail;
+	switch (comm[0]){
+		case 'G': return go_g;
+		case 'S': return go_ch;
+		case 'M': return go_meas;
+		default: return fail;
+	}
 
 }
 
@@ -617,9 +666,30 @@ Actions_TypeDef g_sel_state(void){
   */
 Actions_TypeDef ch_sel_state(void){
 
+	uint16_t Ip = comm[1];
+	uint16_t In = comm[2] + 16;
+	uint16_t Vp = comm[3] + 32;
+	uint16_t Vn = comm[4] + 48;
+
+	GPIO_PinState Data = GPIO_PIN_RESET;
+
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); //reset the parallel clock pin
+
+	for (uint8_t i = 0; i <= 255; i++){
+		if ((i == Ip)||(i == In)||(i == Vp)||(i == Vn))
+			Data = GPIO_PIN_SET;
+		else
+			Data = GPIO_PIN_RESET;
+
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET); //clock off
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, Data); //send data to the switch register
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET); //clock on
+	}
+
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); //set the parallel clock pin to activate the switches
+
 	return ok;
-	return repeat;
-	return fail;
+
 }
 
 /**
@@ -631,11 +701,8 @@ Actions_TypeDef meas_state(void){
 	//Start TIM3 to trigger the ADC
 	if(HAL_TIM_Base_Start(&htim3) != HAL_OK)
 	  Error_Handler();
-
-
 	return ok;
-	return repeat;
-	return fail;
+
 }
 
 /**
@@ -653,7 +720,7 @@ Actions_TypeDef error_state(void){
 //Stops TIM3 once the DMA transfer is completed (this is called by the DMA IRQ Handler)
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 
-	if(HAL_TIM_Base_Stop(&hadc3) != HAL_OK)
+	if(HAL_TIM_Base_Stop(&htim3) != HAL_OK)
 		Error_Handler();
 
 }
