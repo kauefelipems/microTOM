@@ -61,6 +61,9 @@
 #define SCLK_PORT GPIOB
 #define PCLK_PORT GPIOA
 
+// Input Signal Timing
+#define CURRENT_STARTUP 10 //ms
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -77,7 +80,6 @@ ADC_HandleTypeDef hadc3;
 DMA_HandleTypeDef hdma_adc3;
 
 DAC_HandleTypeDef hdac1;
-DMA_HandleTypeDef hdma_dac1_ch1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
@@ -133,6 +135,9 @@ State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_
 
 //Channel Selection
 uint16_t channels[4];
+
+//Current Time
+uint32_t curr_time = 0;
 
 /* USER CODE END 0 */
 
@@ -353,13 +358,6 @@ static void MX_DAC1_Init(void)
   {
     Error_Handler();
   }
-  /** DAC channel OUT2 config
-  */
-  sConfig.DAC_Trigger = DAC_TRIGGER_SOFTWARE;
-  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN DAC1_Init 2 */
 
   /* USER CODE END DAC1_Init 2 */
@@ -390,7 +388,7 @@ static void MX_TIM1_Init(void)
   htim1.Init.Period = 15;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 258;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
@@ -436,7 +434,7 @@ static void MX_TIM3_Init(void)
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 35;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
   {
     Error_Handler();
@@ -478,12 +476,12 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 0;
+  htim8.Init.Prescaler = 99;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 65535;
+  htim8.Init.Period = 71;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
-  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_PWM_Init(&htim8) != HAL_OK)
   {
     Error_Handler();
@@ -496,7 +494,7 @@ static void MX_TIM8_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
+  sConfigOC.Pulse = 35;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -574,9 +572,6 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Channel3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
   /* DMA1_Channel6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
@@ -600,40 +595,34 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOF_CLK_ENABLE();
-  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(PCLK_GPIO_Port, PCLK_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SCLK_GPIO_Port, SCLK_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SDATA_GPIO_Port, SDATA_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PC0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  /*Configure GPIO pin : PCLK_Pin */
+  GPIO_InitStruct.Pin = PCLK_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(PCLK_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  /*Configure GPIO pin : SCLK_Pin */
+  GPIO_InitStruct.Pin = SCLK_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB1 */
-  GPIO_InitStruct.Pin = GPIO_PIN_1;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(SCLK_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA8 */
   GPIO_InitStruct.Pin = GPIO_PIN_8;
@@ -642,6 +631,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF0_TRACE;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SDATA_Pin */
+  GPIO_InitStruct.Pin = SDATA_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(SDATA_GPIO_Port, &GPIO_InitStruct);
 
 }
 
@@ -687,11 +683,13 @@ Actions_TypeDef ch_sel_state(void){
 		channels[3] = comm[3] + 32;
 		channels[4] = comm[4] + 48; //channel variables
 
-		HAL_GPIO_WritePin(SDATA_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
-		HAL_GPIO_WritePin(SCLK_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset the serial clock pin
+		HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
+		HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset the serial clock pin
 		HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //reset the parallel clock pin
 
-		HAL_TIM_Base_Start_IT(&htim1); //Starts Timer
+		if(HAL_TIM_Base_Start_IT(&htim1) != HAL_OK)
+			Error_Handler(); //Starts Timer
+
 	}
 
 	return ok;
@@ -704,11 +702,22 @@ Actions_TypeDef ch_sel_state(void){
   */
 Actions_TypeDef meas_state(void){
 
-	//Start TIM3 to trigger the ADC
-	if(HAL_TIM_Base_Start(&htim3) != HAL_OK)
-	  Error_Handler();
-	return ok;
+	if (curr_time == 0){ //Initialization
+		//Starts PWM for Current Source (10 kHz)
+		if(HAL_TIM_PWM_Start(&htim8,2) != HAL_OK)
+			Error_Handler();
+		curr_time = HAL_GetTick();	//Starts tick
+	}
 
+	if (HAL_GetTick() - curr_time >= CURRENT_STARTUP){ //If time elapsed >= startup delay
+		//Start TIM3 to trigger the ADC
+		if(HAL_TIM_Base_Start(&htim3) != HAL_OK)
+		  Error_Handler();
+		curr_time = 0;
+		return ok;
+	}
+
+	return repeat;
 }
 
 /**
@@ -729,12 +738,15 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 	if(HAL_TIM_Base_Stop(&htim3) != HAL_OK)
 		Error_Handler();
 
+	//Stops PWM
+	if(HAL_TIM_PWM_Stop(&htim8,2) != HAL_OK)
+		Error_Handler();
 }
 
 //Sets serial clock of channel selection every half period of TIM1
 void HAL_TIM_PeriodElapsedHalfCpltCallback(TIM_HandleTypeDef *htim){
 	if(__HAL_TIM_GET_RCR(&htim1) > 1)
-		HAL_GPIO_WritePin(SCLK_PIN, GPIO_PIN_0, GPIO_PIN_SET); //set serial clock
+		HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //set serial clock
 }
 
 /* Callback Functions END-----------------------------------------------------------------*/
@@ -760,24 +772,25 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE BEGIN Callback 1 */
   if (htim->Instance == TIM1) { //Switch Selection Callback
 
-	  HAL_GPIO_WritePin(SCLK_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset serial clock
+	  HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset serial clock
 
 	  uint32_t curr_channel = 257 - __HAL_TIM_GET_RCR(&htim1);
 
 	  if (curr_channel < 256){
 		  if((curr_channel == channels[0])||(curr_channel == channels[1])||
 				  (curr_channel == channels[2])||(curr_channel == channels[3]))
-			  HAL_GPIO_WritePin(SDATA_PIN, GPIO_PIN_0, GPIO_PIN_SET); //set data pin
+			  HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_SET); //set data pin
 
-		  else HAL_GPIO_WritePin(SDATA_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
+		  else HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
 	  }
 
 	  else if(curr_channel == 256)
-		  HAL_GPIO_WritePin(PCLK_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //enable parallel clock
+		  HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //enable parallel clock
 
 	  else{
-		  HAL_GPIO_WritePin(PCLK_PIN, GPIO_PIN_0, GPIO_PIN_SET); //disable parallel clock
-		  HAL_TIM_Base_Stop_IT(&htim1);
+		  HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //disable parallel clock
+		  if(HAL_TIM_Base_Stop_IT(&htim1) != HAL_OK)
+			  Error_Handler();
 		  __HAL_TIM_SET_RCR(&htim1, 258);
 	  }
   }
