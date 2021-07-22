@@ -56,11 +56,19 @@
 #define ENTRY_STATE 0 	    /*defines entry state (allows for further change without
 								modifying the main())*/
 
+// CHANNEL SELECTION
+#define SDATA_PORT GPIOE
+#define SCLK_PORT GPIOB
+#define PCLK_PORT GPIOA
 
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+
+//GET and SET the Timer Repetition Counter Register
+#define __HAL_TIM_SET_RCR(__HANDLE__, __COUNTER__)  ((__HANDLE__)->Instance->RCR = (__COUNTER__))
+#define __HAL_TIM_GET_RCR(__HANDLE__)  ((__HANDLE__)->Instance->RCR)
 
 /* USER CODE END PM */
 
@@ -71,8 +79,8 @@ DMA_HandleTypeDef hdma_adc3;
 DAC_HandleTypeDef hdac1;
 DMA_HandleTypeDef hdma_dac1_ch1;
 
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
-TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart2;
@@ -92,7 +100,7 @@ static void MX_DAC1_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_TIM4_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 
 // State Functions BEGIN
@@ -122,6 +130,9 @@ uint16_t buffer_size = sizeof(adc_buffer)/sizeof(adc_buffer[0]);  //vector size
 
 //State Function Pointer (need to be synchronized with States_TypeDef)
 State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state};
+
+//Channel Selection
+uint16_t channels[4];
 
 /* USER CODE END 0 */
 
@@ -159,7 +170,7 @@ int main(void)
   MX_TIM8_Init();
   MX_USART2_UART_Init();
   MX_TIM3_Init();
-  MX_TIM4_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
   // Set State Machine Variables:
@@ -228,9 +239,10 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_TIM8
-                              |RCC_PERIPHCLK_TIM34;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_TIM1
+                              |RCC_PERIPHCLK_TIM8|RCC_PERIPHCLK_TIM34;
   PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_SYSCLK;
+  PeriphClkInit.Tim1ClockSelection = RCC_TIM1CLK_HCLK;
   PeriphClkInit.Tim8ClockSelection = RCC_TIM8CLK_HCLK;
   PeriphClkInit.Tim34ClockSelection = RCC_TIM34CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -355,6 +367,53 @@ static void MX_DAC1_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 15;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 258;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -396,51 +455,6 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
-
-}
-
-/**
-  * @brief TIM4 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM4_Init(void)
-{
-
-  /* USER CODE BEGIN TIM4_Init 0 */
-
-  /* USER CODE END TIM4_Init 0 */
-
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM4_Init 1 */
-
-  /* USER CODE END TIM4_Init 1 */
-  htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 0;
-  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 65535;
-  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM4_Init 2 */
-
-  /* USER CODE END TIM4_Init 2 */
 
 }
 
@@ -598,7 +612,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_1, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : PC0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
@@ -614,8 +628,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB0 PB1 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
+  /*Configure GPIO pin : PB1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -666,27 +680,19 @@ Actions_TypeDef g_sel_state(void){
   */
 Actions_TypeDef ch_sel_state(void){
 
-	uint16_t Ip = comm[1];
-	uint16_t In = comm[2] + 16;
-	uint16_t Vp = comm[3] + 32;
-	uint16_t Vn = comm[4] + 48;
+	//Channel selection initialization
+	if ((__HAL_TIM_GET_RCR(&htim1) == 258) || (__HAL_TIM_GET_COUNTER(&htim1) == 0 )){ //RCR begins in 256 to count N_CHANNELS+1 ('ghost clock')
+		channels[0] = comm[1];
+		channels[2] = comm[2] + 16;
+		channels[3] = comm[3] + 32;
+		channels[4] = comm[4] + 48; //channel variables
 
-	GPIO_PinState Data = GPIO_PIN_RESET;
+		HAL_GPIO_WritePin(SDATA_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
+		HAL_GPIO_WritePin(SCLK_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset the serial clock pin
+		HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //reset the parallel clock pin
 
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); //reset the parallel clock pin
-
-	for (uint8_t i = 0; i <= 255; i++){
-		if ((i == Ip)||(i == In)||(i == Vp)||(i == Vn))
-			Data = GPIO_PIN_SET;
-		else
-			Data = GPIO_PIN_RESET;
-
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET); //clock off
-		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, Data); //send data to the switch register
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET); //clock on
+		HAL_TIM_Base_Start_IT(&htim1); //Starts Timer
 	}
-
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); //set the parallel clock pin to activate the switches
 
 	return ok;
 
@@ -725,6 +731,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 
 }
 
+//Sets serial clock of channel selection every half period of TIM1
+void HAL_TIM_PeriodElapsedHalfCpltCallback(TIM_HandleTypeDef *htim){
+	if(__HAL_TIM_GET_RCR(&htim1) > 1)
+		HAL_GPIO_WritePin(SCLK_PIN, GPIO_PIN_0, GPIO_PIN_SET); //set serial clock
+}
+
 /* Callback Functions END-----------------------------------------------------------------*/
 
 /* USER CODE END 4 */
@@ -746,7 +758,29 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
+  if (htim->Instance == TIM1) { //Switch Selection Callback
 
+	  HAL_GPIO_WritePin(SCLK_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset serial clock
+
+	  uint32_t curr_channel = 257 - __HAL_TIM_GET_RCR(&htim1);
+
+	  if (curr_channel < 256){
+		  if((curr_channel == channels[0])||(curr_channel == channels[1])||
+				  (curr_channel == channels[2])||(curr_channel == channels[3]))
+			  HAL_GPIO_WritePin(SDATA_PIN, GPIO_PIN_0, GPIO_PIN_SET); //set data pin
+
+		  else HAL_GPIO_WritePin(SDATA_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
+	  }
+
+	  else if(curr_channel == 256)
+		  HAL_GPIO_WritePin(PCLK_PIN, GPIO_PIN_0, GPIO_PIN_RESET); //enable parallel clock
+
+	  else{
+		  HAL_GPIO_WritePin(PCLK_PIN, GPIO_PIN_0, GPIO_PIN_SET); //disable parallel clock
+		  HAL_TIM_Base_Stop_IT(&htim1);
+		  __HAL_TIM_SET_RCR(&htim1, 258);
+	  }
+  }
   /* USER CODE END Callback 1 */
 }
 
