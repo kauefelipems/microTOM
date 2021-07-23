@@ -62,7 +62,11 @@
 #define PCLK_PORT GPIOA
 
 // Input Signal Timing
-#define CURRENT_STARTUP 10 //ms
+#define CURRENT_STARTUP 10 // [ms]
+
+// Initial PGA Voltage
+#define PGA_MIN_VOLTAGE 0.1 // [V]
+#define PGA_MAX_VOLTAGE 1.1 // [V]
 
 /* USER CODE END PD */
 
@@ -70,8 +74,14 @@
 /* USER CODE BEGIN PM */
 
 //GET and SET the Timer Repetition Counter Register
+
+//Timer Macros
 #define __HAL_TIM_SET_RCR(__HANDLE__, __COUNTER__)  ((__HANDLE__)->Instance->RCR = (__COUNTER__))
 #define __HAL_TIM_GET_RCR(__HANDLE__)  ((__HANDLE__)->Instance->RCR)
+
+//DAC Macros
+#define __DAC_VOLTAGE2BIT(__VOLTAGE__) __VOLTAGE__*4096/3.3
+
 
 /* USER CODE END PM */
 
@@ -139,6 +149,9 @@ uint16_t channels[4];
 //Current Time
 uint32_t curr_time = 0;
 
+//Current PGA DAC Value
+uint32_t dac_value = __DAC_VOLTAGE2BIT(PGA_MIN_VOLTAGE);
+
 /* USER CODE END 0 */
 
 /**
@@ -190,6 +203,12 @@ int main(void)
   //ADC Start (TRANSFER TO volt_vector USING DMA)
   if(HAL_ADC_Start_DMA(&hadc3, adc_buffer, ADC_BUFF_SIZE) != HAL_OK)
 	  Error_Handler();
+
+  //GAIN_DAC Start and set value to 0.1 V
+  if((HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) ||
+		  (HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK))
+	  Error_Handler();
+
 
   /* USER CODE END 2 */
 
@@ -346,15 +365,9 @@ static void MX_DAC1_Init(void)
   }
   /** DAC channel OUT1 config
   */
-  sConfig.DAC_Trigger = DAC_TRIGGER_T2_TRGO;
+  sConfig.DAC_Trigger = DAC_TRIGGER_SOFTWARE;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Configure Triangle wave generation on DAC OUT1
-  */
-  if (HAL_DACEx_TriangleWaveGenerate(&hdac1, DAC_CHANNEL_1, DAC_TRIANGLEAMPLITUDE_4095) != HAL_OK)
   {
     Error_Handler();
   }
@@ -665,9 +678,20 @@ Actions_TypeDef comm_wait_state(void){
   */
 Actions_TypeDef g_sel_state(void){
 
+	if ((PGA_MIN_VOLTAGE <= comm[0]) && (comm[0] <= PGA_MAX_VOLTAGE))
+		dac_value = __DAC_VOLTAGE2BIT(comm[0]);
+	else if (comm[0] < PGA_MIN_VOLTAGE)
+		dac_value = __DAC_VOLTAGE2BIT(PGA_MIN_VOLTAGE);
+	else
+		dac_value = __DAC_VOLTAGE2BIT(PGA_MAX_VOLTAGE);
+
+	//Set DAC to the desired GAIN value
+	  if((HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) ||
+			  (HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK))
+		  Error_Handler();
+
 	return ok;
-	return repeat;
-	return fail;
+
 }
 
 /**
@@ -704,7 +728,7 @@ Actions_TypeDef meas_state(void){
 
 	if (curr_time == 0){ //Initialization
 		//Starts PWM for Current Source (10 kHz)
-		if(HAL_TIM_PWM_Start(&htim8,2) != HAL_OK)
+		if(HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2) != HAL_OK)
 			Error_Handler();
 		curr_time = HAL_GetTick();	//Starts tick
 	}
@@ -739,7 +763,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 		Error_Handler();
 
 	//Stops PWM
-	if(HAL_TIM_PWM_Stop(&htim8,2) != HAL_OK)
+	if(HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_1) != HAL_OK)
 		Error_Handler();
 }
 
