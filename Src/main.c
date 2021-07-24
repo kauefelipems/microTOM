@@ -80,7 +80,7 @@
 #define __HAL_TIM_GET_RCR(__HANDLE__)  ((__HANDLE__)->Instance->RCR)
 
 //DAC Macros
-#define __DAC_VOLTAGE2BIT(__VOLTAGE__) __VOLTAGE__*4096/3.3
+#define __DAC_VOLTAGE2BIT(__VOLTAGE__) __VOLTAGE__*4095/3.3
 
 
 /* USER CODE END PM */
@@ -677,6 +677,8 @@ Actions_TypeDef comm_wait_state(void){
   * @retval Next Action: OK, repeat, fail
   */
 Actions_TypeDef g_sel_state(void){
+
+	uint32_t dac_voltage = comm[0]*1.1/255;
 
 	if ((PGA_MIN_VOLTAGE <= comm[0]) && (comm[0] <= PGA_MAX_VOLTAGE))
 		dac_value = __DAC_VOLTAGE2BIT(comm[0]);
