@@ -36,12 +36,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-//Data Buffer
-#define ADC_BUFF_SIZE 500
-
-//Communication Buffer
-#define UART_BUFF_SIZE 10
-
 //Machine Constants
 #define N_CHANNELS 16
 #define FREQUENCY 10000
@@ -49,8 +43,10 @@
 #define MIN_GAIN 0
 #define MAX_GAIN 1.1
 
-//USART Constants
-#define USART_TIMEOUT 1000 //ms
+//UART Constants
+#define UART_TIMEOUT 1000 //ms
+#define ADC_BUFF_SIZE 512 //Data Buffer
+#define COMM_BUFF_SIZE 5 //Communication Buffer
 
 // State Machine Constant
 #define ENTRY_STATE 0 	    /*defines entry state (allows for further change without
@@ -129,16 +125,16 @@ Actions_TypeDef error_state(void);
 /* USER CODE BEGIN 0 */
 
 //Interface Commands
-unsigned char comm[UART_BUFF_SIZE]; 								//command
-uint16_t comm_size = sizeof(comm)/sizeof(comm[0]);  //vector size
+unsigned char comm[COMM_BUFF_SIZE]; 									//command
 
 //Machine Values
 unsigned char channel_val;
 unsigned char gain_val;
 
 //Voltage Measurements
-uint16_t adc_buffer[ADC_BUFF_SIZE]; 									  //USART SEND
-uint16_t buffer_size = sizeof(adc_buffer)/sizeof(adc_buffer[0]);  //vector size
+uint16_t adc_buffer[ADC_BUFF_SIZE]; 									//ADC Measurements
+unsigned char meas_uart[2*ADC_BUFF_SIZE]; 								//UART Buffer
+
 
 //State Function Pointer (need to be synchronized with States_TypeDef)
 State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state};
@@ -151,6 +147,9 @@ uint32_t curr_time = 0;
 
 //Current PGA DAC Value
 uint32_t dac_value = __DAC_VOLTAGE2BIT(PGA_MIN_VOLTAGE);
+
+//Flow Locks
+HAL_LockTypeDef uart_cplt_lck = HAL_LOCKED; //UART Receiving Complete Transfer
 
 /* USER CODE END 0 */
 
@@ -208,7 +207,6 @@ int main(void)
   if((HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) ||
 		  (HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK))
 	  Error_Handler();
-
 
   /* USER CODE END 2 */
 
@@ -556,9 +554,9 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 230400;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.WordLength = UART_WORDLENGTH_9B;
   huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Parity = UART_PARITY_EVEN;
   huart2.Init.Mode = UART_MODE_TX_RX;
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart2.Init.OverSampling = UART_OVERSAMPLING_16;
@@ -663,13 +661,34 @@ static void MX_GPIO_Init(void)
   */
 Actions_TypeDef comm_wait_state(void){
 
-	switch (comm[0]){
-		case 'G': return go_g;
-		case 'S': return go_ch;
-		case 'M': return go_meas;
-		default: return fail;
+	HAL_StatusTypeDef uart_state = HAL_OK;
+
+	if (uart_cplt_lck == HAL_UNLOCKED){	//DMA complete transfer
+
+		uart_cplt_lck = HAL_LOCKED;
+
+		switch (comm[0]){
+			case 'G': return go_g;
+			case 'S': return go_ch;
+			case 'M': return go_meas;
+			default: return fail;
+		}
 	}
 
+	else {
+
+		uart_state = HAL_UART_Receive_DMA(&huart2, comm, COMM_BUFF_SIZE); //Start receiving
+
+		if((uart_state != HAL_OK)){		//If UART not OK
+
+			if(uart_state == HAL_BUSY)  //If UART Busy
+				__NOP();			    //Debugging Line
+			else //If UART Error
+				Error_Handler();
+		}
+
+		return repeat;
+	}
 }
 
 /**
@@ -678,10 +697,10 @@ Actions_TypeDef comm_wait_state(void){
   */
 Actions_TypeDef g_sel_state(void){
 
-	uint32_t dac_voltage = comm[0]*1.1/255;
+	uint32_t dac_voltage = comm[1]*1.1/255;
 
 	if ((PGA_MIN_VOLTAGE <= comm[0]) && (comm[0] <= PGA_MAX_VOLTAGE))
-		dac_value = __DAC_VOLTAGE2BIT(comm[0]);
+		dac_value = __DAC_VOLTAGE2BIT(dac_voltage);
 	else if (comm[0] < PGA_MIN_VOLTAGE)
 		dac_value = __DAC_VOLTAGE2BIT(PGA_MIN_VOLTAGE);
 	else
@@ -758,7 +777,7 @@ Actions_TypeDef error_state(void){
 
 /* Callback Functions BEGIN-----------------------------------------------------------------*/
 
-//Stops TIM3 once the DMA transfer is completed (this is called by the DMA IRQ Handler)
+//Stops TIM3 once the DMA transfer is completed (this is called by the ADC DMA IRQ Handler)
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 
 	if(HAL_TIM_Base_Stop(&htim3) != HAL_OK)
@@ -767,6 +786,14 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 	//Stops PWM
 	if(HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_1) != HAL_OK)
 		Error_Handler();
+
+	//Sends Data to Host
+	HAL_UART_Transmit_DMA(&huart2, adc_buffer, 2*ADC_BUFF_SIZE);
+}
+
+//UART Receive callback (called by the UART DMA IRQ Handler)
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
+	uart_cplt_lck = HAL_UNLOCKED;
 }
 
 //Sets serial clock of channel selection every half period of TIM1
