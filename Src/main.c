@@ -200,7 +200,7 @@ int main(void)
 	  Error_Handler();
 
   //ADC Start (TRANSFER TO volt_vector USING DMA)
-  if(HAL_ADC_Start_DMA(&hadc3, adc_buffer, ADC_BUFF_SIZE) != HAL_OK)
+  if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE) != HAL_OK)
 	  Error_Handler();
 
   //GAIN_DAC Start and set value to 0.1 V
@@ -788,7 +788,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 		Error_Handler();
 
 	//Sends Data to Host
-	HAL_UART_Transmit_DMA(&huart2, adc_buffer, 2*ADC_BUFF_SIZE);
+	HAL_UART_Transmit_DMA(&huart2, (uint8_t*) adc_buffer, 2*ADC_BUFF_SIZE);
 }
 
 //UART Receive callback (called by the UART DMA IRQ Handler)
