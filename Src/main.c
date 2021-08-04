@@ -55,9 +55,9 @@
 								modifying the main())*/
 
 // CHANNEL SELECTION
-#define SDATA_PORT GPIOE
+#define SDATA_PORT GPIOA
 #define SCLK_PORT GPIOB
-#define PCLK_PORT GPIOA
+#define PCLK_PORT GPIOE
 
 // Input Signal Timing
 #define CURRENT_STARTUP_TIME 10 // [ms]
@@ -73,9 +73,6 @@
 
 //GET and SET the Timer Repetition Counter Register
 
-//Timer Macros
-#define __HAL_TIM_SET_RCR(__HANDLE__, __COUNTER__)  ((__HANDLE__)->Instance->RCR = (__COUNTER__))
-#define __HAL_TIM_GET_RCR(__HANDLE__)  ((__HANDLE__)->Instance->RCR)
 
 //DAC Macros
 #define __DAC_VOLTAGE2BIT(__VOLTAGE__) __VOLTAGE__*4095/3.3
@@ -144,6 +141,7 @@ State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_
 
 //Channel Selection
 uint8_t channels[4];
+uint16_t ch_counter = 1;
 
 //Current Time
 uint32_t entry_time = 0;
@@ -724,7 +722,7 @@ Actions_TypeDef ch_sel_state(void){
 	channels_value[3] = comm[4];
 
 	//Channel selection initialization
-	if ((__HAL_TIM_GET_RCR(&htim1) == 258) || (__HAL_TIM_GET_COUNTER(&htim1) == 0 )){ //RCR begins in 256 to count N_CHANNELS+1 ('ghost clock')
+	if (__HAL_TIM_GET_COUNTER(&htim1) == 0 ){
 		channels[0] = comm[1];
 		channels[1] = comm[2] + 16;
 		channels[2] = comm[3] + 32;
@@ -736,6 +734,8 @@ Actions_TypeDef ch_sel_state(void){
 
 		if(HAL_TIM_Base_Start_IT(&htim1) != HAL_OK)
 			Error_Handler(); //Starts Timer
+
+		ch_counter = 1; //reset channel counter
 
 	}
 
@@ -766,7 +766,6 @@ Actions_TypeDef meas_state(void){
 
 	if (elapsed_time >= CURRENT_STARTUP_TIME){ //If time elapsed >= startup delay
 		//Start TIM3 to trigger the ADC
-		entry_time = 0;
 		if(HAL_TIM_Base_Start(&htim3) != HAL_OK)
 		  Error_Handler();
 		return ok;
@@ -840,8 +839,12 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
 
 //Sets serial clock of channel selection every half period of TIM1
 void HAL_TIM_PeriodElapsedHalfCpltCallback(TIM_HandleTypeDef *htim){
-	if(__HAL_TIM_GET_RCR(&htim1) > 1)
-		HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //set serial clock
+
+  if (htim->Instance == TIM1) {
+	  __NOP();
+	  HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //set serial clock
+  }
+
 }
 
 /* Callback Functions END-----------------------------------------------------------------*/
@@ -869,25 +872,25 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 	  HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset serial clock
 
-	  uint32_t curr_channel = 257 - __HAL_TIM_GET_RCR(&htim1);
-
-	  if (curr_channel < 256){
-		  if((curr_channel == channels[0])||(curr_channel == channels[1])||
-				  (curr_channel == channels[2])||(curr_channel == channels[3]))
+	  if (ch_counter <= 256){ // switch selection
+		  if((ch_counter == channels[0])||(ch_counter == channels[1])||
+				  (ch_counter == channels[2])||(ch_counter == channels[3]))
 			  HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_SET); //set data pin
 
 		  else HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
 	  }
 
-	  else if(curr_channel == 256)
+	  else if(ch_counter == 257) // end of series clock
 		  HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //enable parallel clock
 
-	  else{
+	  else if(ch_counter == 258){ // end of parallel clock
 		  HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //disable parallel clock
 		  if(HAL_TIM_Base_Stop_IT(&htim1) != HAL_OK)
 			  Error_Handler();
-		  __HAL_TIM_SET_RCR(&htim1, 258);
+		  __HAL_TIM_SET_COUNTER(&htim1, 0);
 	  }
+
+	  ch_counter += 1; //update channel counter
   }
   /* USER CODE END Callback 1 */
 }
