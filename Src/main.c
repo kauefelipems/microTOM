@@ -72,12 +72,13 @@ typedef enum
 #define SWITCH_DATA_OFF (uint32_t)(((uint32_t)GPIO_PIN_0) << 16)
 #define SWITCH_SIZE 256
 
-//PCLK Clock Length (CLOCK CYCLES)
-#define PCLK_DELAY 1
+//PCLK Clock Length
+#define PCLK_DELAY 1 //[clock cycles]
 
-// Input Signal Timing
-#define CURRENT_STARTUP_TIME 10 // [ms]
+// Channel Stabilization Time
+#define CHANNEL_STABILIZATION_TIME 72 // [clock cycles]
 
+// PGA
 // Initial PGA Voltage (255 is 1.1V and 24 is 0.1035V)
 #define PGA_MIN_VOLTAGE 24 // [bits]
 #define PGA_MAX_VOLTAGE 255 // [bits]
@@ -140,6 +141,8 @@ Actions_TypeDef ch_sel_state(void);
 Actions_TypeDef meas_state(void);
 Actions_TypeDef error_state(void);
 Actions_TypeDef diag_state(void);
+Actions_TypeDef exc_state(void);
+
 // State Functions END
 
 /* USER CODE END PFP */
@@ -159,7 +162,7 @@ uint16_t adc_buffer[ADC_BUFF_SIZE]; 									//ADC Measurements
 unsigned char meas_uart[2*ADC_BUFF_SIZE]; 								//UART Buffer
 
 //State Function Pointer (need to be synchronized with States_TypeDef)
-State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state, diag_state};
+State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state, diag_state, exc_state};
 
 //Channel Selection
 uint32_t ch_data[256];
@@ -764,6 +767,7 @@ Actions_TypeDef comm_wait_state(void){
 			case 'S': return go_ch;
 			case 'M': return go_meas;
 			case 'D': return go_diag;
+			case 'E': return go_ex;
 			default: return fail;
 		}
 	}
@@ -881,31 +885,43 @@ Actions_TypeDef ch_sel_state(void){
   */
 Actions_TypeDef meas_state(void){
 
-	if (entry_time == 0){ //Initialization
-		//Starts PWM for Current Source (10 kHz)
-		if(HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2) == HAL_BUSY)
-			elapsed_time = CURRENT_STARTUP_TIME; //if already on, don't wait the startup
-		entry_time = HAL_GetTick();	//Starts tick
+	//ADC Start (TRANSFER TO volt_vector USING DMA)
+	if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE) == HAL_OK)
+		HAL_TIM_Base_Start(&htim4);					//If not busy, starts the timer
 
-	  //ADC Start (TRANSFER TO volt_vector USING DMA)
-	  if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE) != HAL_OK)
-		  Error_Handler();
+	if (__HAL_TIM_GET_COUNTER(&htim4) >= CHANNEL_STABILIZATION_TIME){ //Wait switching stabilization time
 
-		return repeat;
-	}
-
-	uint32_t elapsed_time = HAL_GetTick() - entry_time;
-
-	if (elapsed_time >= CURRENT_STARTUP_TIME){ //If time elapsed >= startup delay
 		//Start TIM3 to trigger the ADC
 		if(HAL_TIM_Base_Start(&htim3) != HAL_OK)
 		  Error_Handler();
+
+		HAL_TIM_Base_Stop(&htim4); //stops counter
 		return ok;
 	}
 	else
 		return repeat;
 
 
+}
+
+/**
+  * @brief Starts/Stops Excitation Signal (Square Wave, 10 kHz)
+  * @retval Next Action: OK, repeat, fail
+  */
+Actions_TypeDef exc_state(void){
+
+	if (comm[1] != 0){ //turn ON
+		//Starts PWM for Current Source (10 kHz)
+		if(HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2) == HAL_ERROR)
+			Error_Handler();
+	}
+	else{				//turn OFF
+		//Stops PWM for Current Source
+		if(HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_2) == HAL_ERROR)
+			Error_Handler();
+	}
+
+	return ok;
 }
 
 /**

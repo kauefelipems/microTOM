@@ -10,14 +10,14 @@
 #include <stdio.h>
 
 // Parameter Definitions
-#define N_STATES 6
-#define N_ACTIONS 7
+#define N_STATES 7
+#define N_ACTIONS 8
 
 // TypeDef Definitions
-typedef enum{wait_code, g_sel, ch_sel, measuring, error_msg, diagnostics
+typedef enum{wait_code, g_sel, ch_sel, measuring, error_msg, diagnostics, excitation
 } States_TypeDef;
 
-typedef enum{go_g, go_ch, go_meas, ok, repeat, fail, go_diag
+typedef enum{go_g, go_ch, go_meas, ok, repeat, fail, go_diag, go_ex
 } Actions_TypeDef;
 
 
