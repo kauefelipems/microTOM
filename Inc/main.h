@@ -62,20 +62,18 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define PCLK_Pin GPIO_PIN_0
-#define PCLK_GPIO_Port GPIOA
+#define SDATA_Pin GPIO_PIN_0
+#define SDATA_GPIO_Port GPIOA
 #define GAIN_SEL_Pin GPIO_PIN_4
 #define GAIN_SEL_GPIO_Port GPIOA
-#define SCLK_Pin GPIO_PIN_0
-#define SCLK_GPIO_Port GPIOB
 #define VP_INPUT_Pin GPIO_PIN_12
 #define VP_INPUT_GPIO_Port GPIOD
 #define VN_INPUT_Pin GPIO_PIN_13
 #define VN_INPUT_GPIO_Port GPIOD
 #define SQR_OUT_Pin GPIO_PIN_7
 #define SQR_OUT_GPIO_Port GPIOC
-#define SDATA_Pin GPIO_PIN_0
-#define SDATA_GPIO_Port GPIOE
+#define PCLK_Pin GPIO_PIN_0
+#define PCLK_GPIO_Port GPIOE
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

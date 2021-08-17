@@ -59,12 +59,29 @@
 #define SCLK_PORT GPIOB
 #define PCLK_PORT GPIOE
 
+typedef enum
+{
+  SWITCH_BEGIN = 0U,
+  SWITCH_TRANSFER,
+  SWITCH_LOAD,
+  SWITCH_END
+}Switch_State;
+
+//Values of BSRR for the switching system
+#define SWITCH_DATA_ON (uint32_t)(((uint32_t)GPIO_PIN_0))
+#define SWITCH_DATA_OFF (uint32_t)(((uint32_t)GPIO_PIN_0) << 16)
+#define SWITCH_SIZE 256
+
+//PCLK Clock Length (CLOCK CYCLES)
+#define PCLK_DELAY 1
+
 // Input Signal Timing
 #define CURRENT_STARTUP_TIME 10 // [ms]
 
-// Initial PGA Voltage
-#define PGA_MIN_VOLTAGE 0.1 // [V]
-#define PGA_MAX_VOLTAGE 1.1 // [V]
+// Initial PGA Voltage (255 is 1.1V and 24 is 0.1035V)
+#define PGA_MIN_VOLTAGE 24 // [bits]
+#define PGA_MAX_VOLTAGE 255 // [bits]
+
 
 /* USER CODE END PD */
 
@@ -75,7 +92,7 @@
 
 
 //DAC Macros
-#define __DAC_VOLTAGE2BIT(__VOLTAGE__) __VOLTAGE__*4095/3.3
+#define __DAC_VOLTAGE2BIT(__VOLTAGE__) (uint16_t)__VOLTAGE__*4095/(765)
 
 
 /* USER CODE END PM */
@@ -88,7 +105,9 @@ DAC_HandleTypeDef hdac1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim8;
+DMA_HandleTypeDef hdma_tim1_up;
 
 UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
@@ -106,9 +125,13 @@ static void MX_ADC3_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_TIM1_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
+
+// Private Callback
+void Switch_Cplt_Callback(DMA_HandleTypeDef *hdma);
 
 // State Functions BEGIN
 Actions_TypeDef comm_wait_state(void);
@@ -135,13 +158,13 @@ uint8_t channels_value[4] = {0,0,0,0};
 uint16_t adc_buffer[ADC_BUFF_SIZE]; 									//ADC Measurements
 unsigned char meas_uart[2*ADC_BUFF_SIZE]; 								//UART Buffer
 
-
 //State Function Pointer (need to be synchronized with States_TypeDef)
 State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state, diag_state};
 
 //Channel Selection
-uint8_t channels[4];
-uint16_t ch_counter = 1;
+uint32_t ch_data[256];
+uint16_t ch_counter = 0;
+Switch_State sw_flag = SWITCH_BEGIN;
 
 //Current Time
 uint32_t entry_time = 0;
@@ -187,8 +210,9 @@ int main(void)
   MX_DAC1_Init();
   MX_TIM8_Init();
   MX_TIM3_Init();
-  MX_TIM1_Init();
   MX_USART3_UART_Init();
+  MX_TIM1_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
   // Set State Machine Variables:
@@ -201,8 +225,8 @@ int main(void)
 	  Error_Handler();
 
   //GAIN_DAC Start and set value to 0.1 V
-  if((HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) ||
-		  (HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK))
+	if((HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK) ||
+		  (HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) != HAL_OK)
 	  Error_Handler();
 
   /* USER CODE END 2 */
@@ -386,16 +410,18 @@ static void MX_TIM1_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 0;
+  htim1.Init.Prescaler = 9;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 15;
+  htim1.Init.Period = 35;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 258;
+  htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
   {
@@ -406,16 +432,47 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
-  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC2REF;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 17;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_LOW;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
   {
     Error_Handler();
   }
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -465,6 +522,51 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 359;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * @brief TIM8 Initialization Function
   * @param None
   * @retval None
@@ -484,12 +586,12 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 99;
+  htim8.Init.Prescaler = 999;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim8.Init.Period = 71;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
-  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim8) != HAL_OK)
   {
     Error_Handler();
@@ -505,7 +607,7 @@ static void MX_TIM8_Init(void)
   sConfigOC.Pulse = 35;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
@@ -581,13 +683,16 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
   /* DMA1_Channel3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
   /* DMA2_Channel5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Channel5_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Channel5_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA2_Channel5_IRQn);
 
 }
@@ -610,27 +715,17 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(PCLK_GPIO_Port, PCLK_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SCLK_GPIO_Port, SCLK_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SDATA_GPIO_Port, SDATA_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PCLK_Pin */
-  GPIO_InitStruct.Pin = PCLK_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(PCLK_GPIO_Port, &GPIO_InitStruct);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(PCLK_GPIO_Port, PCLK_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : SCLK_Pin */
-  GPIO_InitStruct.Pin = SCLK_Pin;
+  /*Configure GPIO pin : SDATA_Pin */
+  GPIO_InitStruct.Pin = SDATA_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(SCLK_GPIO_Port, &GPIO_InitStruct);
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(SDATA_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA8 */
   GPIO_InitStruct.Pin = GPIO_PIN_8;
@@ -640,12 +735,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF0_TRACE;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SDATA_Pin */
-  GPIO_InitStruct.Pin = SDATA_Pin;
+  /*Configure GPIO pin : PCLK_Pin */
+  GPIO_InitStruct.Pin = PCLK_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(SDATA_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(PCLK_GPIO_Port, &GPIO_InitStruct);
 
 }
 
@@ -692,19 +787,13 @@ Actions_TypeDef comm_wait_state(void){
 Actions_TypeDef g_sel_state(void){
 
 	gain_val = comm[1];
-	uint32_t dac_voltage = gain_val*1.1/255;
 
-	if ((PGA_MIN_VOLTAGE <= comm[0]) && (comm[0] <= PGA_MAX_VOLTAGE))
-		dac_value = __DAC_VOLTAGE2BIT(dac_voltage);
-	else if (comm[0] < PGA_MIN_VOLTAGE)
-		dac_value = __DAC_VOLTAGE2BIT(PGA_MIN_VOLTAGE);
-	else
-		dac_value = __DAC_VOLTAGE2BIT(PGA_MAX_VOLTAGE);
+	dac_value = __DAC_VOLTAGE2BIT(gain_val);
 
 	//Set DAC to the desired GAIN value
-	  if((HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) ||
-			  (HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK))
-		  Error_Handler();
+	if((HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK) ||
+		  (HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) != HAL_OK)
+		Error_Handler();
 
 	return ok;
 
@@ -716,31 +805,74 @@ Actions_TypeDef g_sel_state(void){
   */
 Actions_TypeDef ch_sel_state(void){
 
+	//Channel selection initialization
+
 	channels_value[0] = comm[1];
 	channels_value[1] = comm[2];
 	channels_value[2] = comm[3];
 	channels_value[3] = comm[4];
 
-	//Channel selection initialization
-	if (__HAL_TIM_GET_COUNTER(&htim1) == 0 ){
-		channels[0] = comm[1];
-		channels[1] = comm[2] + 16;
-		channels[2] = comm[3] + 32;
-		channels[3] = comm[4] + 48; //channel variables
+	switch (sw_flag) {
 
-		HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
-		HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset the serial clock pin
-		HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //reset the parallel clock pin
+		case SWITCH_BEGIN:
 
-		if(HAL_TIM_Base_Start_IT(&htim1) != HAL_OK)
-			Error_Handler(); //Starts Timer
+			HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
+			HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //reset the parallel clock pin
 
-		ch_counter = 1; //reset channel counter
+			//build the ch_data buffer (each channel connects to channel + n*16 switch)
+			for(ch_counter = 0; ch_counter < 256; ch_counter++){
+				ch_data[ch_counter] = SWITCH_DATA_OFF;
+
+				if((ch_counter == comm[1] - 1)||(ch_counter == comm[2] + 15)||
+						(ch_counter == comm[3] + 31)||(ch_counter == comm[4] + 47))
+				{
+					ch_data[ch_counter] = SWITCH_DATA_ON;
+				}
+			}
+
+			ch_counter = 0; //reset channel counter
+			sw_flag = SWITCH_TRANSFER;
+
+			__HAL_TIM_DISABLE_DMA(&htim1, TIM_DMA_UPDATE);
+
+			htim1.hdma[TIM_DMA_ID_UPDATE]->XferCpltCallback = Switch_Cplt_Callback;
+
+			if(HAL_DMA_Start_IT(&hdma_tim1_up, (uint32_t)ch_data, (uint32_t)&(SDATA_PORT->BSRR), (uint32_t)SWITCH_SIZE) != HAL_OK)
+				Error_Handler(); //starts DMA
+
+			__HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE); //enable DMA update
+
+			if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2) != HAL_OK)
+				Error_Handler(); //Starts Timer
+
+		case SWITCH_TRANSFER:
+			break;
+
+		case SWITCH_LOAD:
+
+		  if(HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2) != HAL_OK)
+			  Error_Handler();
+
+			HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //enable parallel clock
+
+			__HAL_TIM_SET_COUNTER(&htim1, 0);
+
+			HAL_TIM_Base_Start(&htim4);
+
+			sw_flag = SWITCH_END;
+
+		case SWITCH_END:
+
+			if(__HAL_TIM_GET_COUNTER(&htim4) >= PCLK_DELAY) //check if timer reached the PCLK length
+			{
+				HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //enable parallel clock
+				HAL_TIM_Base_Stop(&htim4);
+				sw_flag = SWITCH_BEGIN;
+				return ok;
+			}
 
 	}
-
-	return ok;
-
+	return repeat;
 }
 
 /**
@@ -751,8 +883,8 @@ Actions_TypeDef meas_state(void){
 
 	if (entry_time == 0){ //Initialization
 		//Starts PWM for Current Source (10 kHz)
-		if(HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2) != HAL_OK)
-			Error_Handler();
+		if(HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2) == HAL_BUSY)
+			elapsed_time = CURRENT_STARTUP_TIME; //if already on, don't wait the startup
 		entry_time = HAL_GetTick();	//Starts tick
 
 	  //ADC Start (TRANSFER TO volt_vector USING DMA)
@@ -817,10 +949,10 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 		Error_Handler();
 
 	//Stops Input Signal
-	if(HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_2) != HAL_OK)
-		Error_Handler();
+	//if(HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_2) != HAL_OK)
+		//Error_Handler();
 
-
+	entry_time = 0;
 
 	//Sends Data to Host
 	HAL_UART_Transmit_DMA(&huart3, (uint8_t*) adc_buffer, 2*ADC_BUFF_SIZE);
@@ -832,19 +964,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	uart_cplt_lck = HAL_UNLOCKED;
 }
 
-//UART Transmit callback (called by the UART DMA IRQ Handler)
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
-	__NOP();
-}
 
-//Sets serial clock of channel selection every half period of TIM1
-void HAL_TIM_PeriodElapsedHalfCpltCallback(TIM_HandleTypeDef *htim){
-
-  if (htim->Instance == TIM1) {
-	  __NOP();
-	  HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //set serial clock
-  }
-
+void Switch_Cplt_Callback(DMA_HandleTypeDef *hdma)
+{
+	sw_flag = SWITCH_LOAD;
 }
 
 /* Callback Functions END-----------------------------------------------------------------*/
@@ -868,30 +991,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
-  if (htim->Instance == TIM1) { //Switch Selection Callback
 
-	  HAL_GPIO_WritePin(SCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset serial clock
-
-	  if (ch_counter <= 256){ // switch selection
-		  if((ch_counter == channels[0])||(ch_counter == channels[1])||
-				  (ch_counter == channels[2])||(ch_counter == channels[3]))
-			  HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_SET); //set data pin
-
-		  else HAL_GPIO_WritePin(SDATA_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //reset data pin
-	  }
-
-	  else if(ch_counter == 257) // end of series clock
-		  HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //enable parallel clock
-
-	  else if(ch_counter == 258){ // end of parallel clock
-		  HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //disable parallel clock
-		  if(HAL_TIM_Base_Stop_IT(&htim1) != HAL_OK)
-			  Error_Handler();
-		  __HAL_TIM_SET_COUNTER(&htim1, 0);
-	  }
-
-	  ch_counter += 1; //update channel counter
-  }
   /* USER CODE END Callback 1 */
 }
 
