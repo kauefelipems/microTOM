@@ -46,9 +46,10 @@
 
 //UART Constants
 #define UART_TIMEOUT 1000 //ms
-#define ADC_BUFF_SIZE 512 //Data Buffer
+#define ADC_BUFF_SIZE 513 //Data Buffer
 #define COMM_BUFF_SIZE 5  //Command Buffer
 #define DIAG_BUFF_SIZE 8 //Diagnostic Buffer
+#define TERMINATOR 2573       //CR/LF Terminator in 16 bits
 
 // State Machine Constant
 #define ENTRY_STATE 0 	    /*defines entry state (allows for further change without
@@ -231,6 +232,10 @@ int main(void)
 	if((HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value) != HAL_OK) ||
 		  (HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) != HAL_OK)
 	  Error_Handler();
+
+
+  //UART Terminator
+	adc_buffer[ADC_BUFF_SIZE - 1] = TERMINATOR;
 
   /* USER CODE END 2 */
 
@@ -768,7 +773,7 @@ Actions_TypeDef comm_wait_state(void){
 			case 'M': return go_meas;
 			case 'D': return go_diag;
 			case 'E': return go_ex;
-			default: return fail;
+			default: return repeat;
 		}
 	}
 
@@ -886,7 +891,7 @@ Actions_TypeDef ch_sel_state(void){
 Actions_TypeDef meas_state(void){
 
 	//ADC Start (TRANSFER TO volt_vector USING DMA)
-	if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE) == HAL_OK)
+	if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE - 1) == HAL_OK)
 		HAL_TIM_Base_Start(&htim4);					//If not busy, starts the timer
 
 	if (__HAL_TIM_GET_COUNTER(&htim4) >= CHANNEL_STABILIZATION_TIME){ //Wait switching stabilization time
