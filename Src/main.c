@@ -910,16 +910,11 @@ Actions_TypeDef meas_state(void){
   */
 Actions_TypeDef exc_state(void){
 
-	if (comm[1] != 0){ //turn ON
-		//Starts PWM for Current Source (10 kHz)
-		if(HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2) == HAL_ERROR)
-			Error_Handler();
-	}
-	else{				//turn OFF
-		//Stops PWM for Current Source
-		if(HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_2) == HAL_ERROR)
-			Error_Handler();
-	}
+	if (comm[1] != 0) //turn ON
+		HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2); //Starts PWM for Current Source (10 kHz)
+
+	else				//turn OFF
+		HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_2); //Stops PWM for Current Source
 
 	return ok;
 }
