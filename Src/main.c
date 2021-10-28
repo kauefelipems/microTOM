@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "state_machine.h"
+#include "ring_buffer.h"
 
 /* USER CODE END Includes */
 
@@ -45,11 +46,15 @@
 #define MAX_GAIN 1.1
 
 //UART Constants
-#define UART_TIMEOUT 1000 //ms
-#define ADC_BUFF_SIZE 513 //Data Buffer
-#define COMM_BUFF_SIZE 5  //Command Buffer
-#define DIAG_BUFF_SIZE 8 //Diagnostic Buffer
-#define TERMINATOR 2573       //CR/LF Terminator in 16 bits
+#define UART_TIMEOUT 1000 									//ms
+#define ADC_BUFF_SIZE 1024     								//Data Buffer
+#define COMM_BUFF_SIZE 5  									//Command Buffer
+#define DIAG_BUFF_SIZE 8 									//Diagnostic Buffer
+#define TERMINATOR 2573     								//CR/LF Terminator in 16 bits
+#define N_COMMANDS 208
+#define PROT_BUFF_SIZE 5*N_COMMANDS							//Buffer to receive the protocol
+#define PROT_DIVISION 26
+#define RING_BUFFER_SIZE (PROT_DIVISION)*(ADC_BUFF_SIZE) + 1	//Buffer to transmit data
 
 // State Machine Constant
 #define ENTRY_STATE 0 	    /*defines entry state (allows for further change without
@@ -59,6 +64,7 @@
 #define SDATA_PORT GPIOA
 #define SCLK_PORT GPIOB
 #define PCLK_PORT GPIOE
+#define CS_BUFFER_SIZE 256
 
 typedef enum
 {
@@ -71,13 +77,12 @@ typedef enum
 //Values of BSRR for the switching system
 #define SWITCH_DATA_ON (uint32_t)(((uint32_t)GPIO_PIN_0))
 #define SWITCH_DATA_OFF (uint32_t)(((uint32_t)GPIO_PIN_0) << 16)
-#define SWITCH_SIZE 256
 
 //PCLK Clock Length
 #define PCLK_DELAY 1 //[clock cycles]
 
 // Channel Stabilization Time
-#define CHANNEL_STABILIZATION_TIME 72 // [clock cycles]
+#define CHANNEL_STABILIZATION_TIME 10000 // [timer cycles]
 
 // PGA
 // Initial PGA Voltage (255 is 1.1V and 24 is 0.1035V)
@@ -143,8 +148,12 @@ Actions_TypeDef meas_state(void);
 Actions_TypeDef error_state(void);
 Actions_TypeDef diag_state(void);
 Actions_TypeDef exc_state(void);
+Actions_TypeDef prot_state(void);
+Actions_TypeDef run_state(void);
 
 // State Functions END
+
+void APPEND_MEASUREMENT(void);
 
 /* USER CODE END PFP */
 
@@ -153,6 +162,7 @@ Actions_TypeDef exc_state(void);
 
 //Interface Commands
 uint8_t comm[COMM_BUFF_SIZE]; 									//command
+uint8_t protocol[PROT_BUFF_SIZE];								//protocol buffer
 
 //Machine Values
 uint8_t gain_val;
@@ -160,15 +170,16 @@ uint8_t channels_value[4] = {0,0,0,0};
 
 //Voltage Measurements
 uint16_t adc_buffer[ADC_BUFF_SIZE]; 									//ADC Measurements
-unsigned char meas_uart[2*ADC_BUFF_SIZE]; 								//UART Buffer
+uint16_t uart_ring_buffer[RING_BUFFER_SIZE];
+ring_buf_t ring_buffer_struct;
 
 //State Function Pointer (need to be synchronized with States_TypeDef)
-State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state, meas_state, error_state, diag_state, exc_state};
+State_FunctionsTypeDef state_func_ptr[] = {comm_wait_state, g_sel_state, ch_sel_state,
+		meas_state, error_state, diag_state, exc_state, prot_state, run_state};
 
 //Channel Selection
-uint32_t ch_data[256];
-uint16_t ch_counter = 0;
 Switch_State sw_flag = SWITCH_BEGIN;
+uint32_t ch_data[CS_BUFFER_SIZE + 1];
 
 //Current Time
 uint32_t entry_time = 0;
@@ -178,6 +189,8 @@ uint32_t dac_value = __DAC_VOLTAGE2BIT(PGA_MIN_VOLTAGE);
 
 //Flow Locks
 HAL_LockTypeDef uart_cplt_lck = HAL_LOCKED; //UART Receiving Complete Transfer
+HAL_LockTypeDef protocol_run_lck = HAL_LOCKED; //UART Receiving Complete Transfer
+HAL_LockTypeDef protocol_mode = HAL_LOCKED; //UART Receiving Complete Transfer
 
 /* USER CODE END 0 */
 
@@ -233,9 +246,11 @@ int main(void)
 		  (HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK) != HAL_OK)
 	  Error_Handler();
 
+  //Ring Buffer Initialization
+	ring_buf_init(&ring_buffer_struct, uart_ring_buffer, RING_BUFFER_SIZE);
 
   //UART Terminator
-	adc_buffer[ADC_BUFF_SIZE - 1] = TERMINATOR;
+	//adc_buffer[ADC_BUFF_SIZE - 1] = TERMINATOR;
 
   /* USER CODE END 2 */
 
@@ -594,7 +609,7 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 999;
+  htim8.Init.Prescaler = 99;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim8.Init.Period = 71;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -773,6 +788,8 @@ Actions_TypeDef comm_wait_state(void){
 			case 'M': return go_meas;
 			case 'D': return go_diag;
 			case 'E': return go_ex;
+			case 'P': return go_prot;
+			case 'R': return go_run;
 			default: return repeat;
 		}
 	}
@@ -829,24 +846,23 @@ Actions_TypeDef ch_sel_state(void){
 			HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_SET); //reset the parallel clock pin
 
 			//build the ch_data buffer (each channel connects to channel + n*16 switch)
-			for(ch_counter = 0; ch_counter < 256; ch_counter++){
+			for(uint16_t ch_counter = 0; ch_counter <= CS_BUFFER_SIZE; ch_counter++){
 				ch_data[ch_counter] = SWITCH_DATA_OFF;
 
-				if((ch_counter == comm[1] - 1)||(ch_counter == comm[2] + 15)||
-						(ch_counter == comm[3] + 31)||(ch_counter == comm[4] + 47))
+				if((ch_counter == comm[3] - 1)||(ch_counter == comm[4] + 15)||
+						(ch_counter == comm[1] + 31)||(ch_counter == comm[2] + 47))
 				{
 					ch_data[ch_counter] = SWITCH_DATA_ON;
 				}
 			}
 
-			ch_counter = 0; //reset channel counter
 			sw_flag = SWITCH_TRANSFER;
 
 			__HAL_TIM_DISABLE_DMA(&htim1, TIM_DMA_UPDATE);
 
 			htim1.hdma[TIM_DMA_ID_UPDATE]->XferCpltCallback = Switch_Cplt_Callback;
 
-			if(HAL_DMA_Start_IT(&hdma_tim1_up, (uint32_t)ch_data, (uint32_t)&(SDATA_PORT->BSRR), (uint32_t)SWITCH_SIZE) != HAL_OK)
+			if(HAL_DMA_Start_IT(&hdma_tim1_up, (uint32_t)ch_data, (uint32_t)&(SDATA_PORT->BSRR), (uint32_t)(CS_BUFFER_SIZE + 1)) != HAL_OK)
 				Error_Handler(); //starts DMA
 
 			__HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE); //enable DMA update
@@ -865,6 +881,7 @@ Actions_TypeDef ch_sel_state(void){
 			HAL_GPIO_WritePin(PCLK_PORT, GPIO_PIN_0, GPIO_PIN_RESET); //enable parallel clock
 
 			__HAL_TIM_SET_COUNTER(&htim1, 0);
+			__HAL_TIM_SET_COUNTER(&htim4, 0);
 
 			HAL_TIM_Base_Start(&htim4);
 
@@ -891,7 +908,8 @@ Actions_TypeDef ch_sel_state(void){
 Actions_TypeDef meas_state(void){
 
 	//ADC Start (TRANSFER TO volt_vector USING DMA)
-	if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE - 1) == HAL_OK)
+	if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE) == HAL_OK)
+		__HAL_TIM_SET_COUNTER(&htim4, 0);
 		HAL_TIM_Base_Start(&htim4);					//If not busy, starts the timer
 
 	if (__HAL_TIM_GET_COUNTER(&htim4) >= CHANNEL_STABILIZATION_TIME){ //Wait switching stabilization time
@@ -905,7 +923,6 @@ Actions_TypeDef meas_state(void){
 	}
 	else
 		return repeat;
-
 
 }
 
@@ -950,9 +967,81 @@ Actions_TypeDef diag_state(void){
 	return ok;
 }
 
+/**
+  * @brief Stores the protocol into a buffer to run later
+  * @retval Next Action - OK, repeat, fail
+  */
+Actions_TypeDef prot_state(void){
+
+
+	if (uart_cplt_lck == HAL_UNLOCKED){
+		MX_DMA_Init();
+		uart_cplt_lck = HAL_LOCKED;
+		return ok;
+	}
+
+	else{
+
+		if((HAL_UART_Receive_DMA(&huart3, protocol, PROT_BUFF_SIZE) == HAL_ERROR))		//If UART ERROR
+				Error_Handler();
+		return repeat;
+	}
+
+}
+
+/**
+  * @brief Runs the protocol stored in the buffer
+  * @retval Next Action - OK, repeat, fail
+  */
+Actions_TypeDef run_state(void){
+
+	uint16_t terminator = TERMINATOR;
+
+	protocol_mode = HAL_UNLOCKED;
+	uart_cplt_lck = HAL_LOCKED;
+
+	for (uint16_t command = 0; command < PROT_BUFF_SIZE; command += 5){
+
+		comm[1] = protocol[command];
+
+		if (g_sel_state() == fail){
+			return fail;
+		}
+
+		comm[1] = protocol[command + 1];
+		comm[2] = protocol[command + 2];
+		comm[3] = protocol[command + 3];
+		comm[4] = protocol[command + 4];
+
+		while(ch_sel_state() != ok){}
+
+		while(meas_state() != ok){}
+
+		while(protocol_run_lck != HAL_UNLOCKED){
+
+		}
+		protocol_run_lck = HAL_LOCKED;
+
+		//Transmit Data
+		if ((command+5)%(5*PROT_DIVISION) == 0){
+
+			ring_buf_put(&ring_buffer_struct, &terminator, 1);
+			HAL_UART_Transmit_DMA(&huart3, (uint8_t*) uart_ring_buffer, 2*(RING_BUFFER_SIZE));
+			ring_buf_reset(&ring_buffer_struct);
+
+			while(uart_cplt_lck != HAL_UNLOCKED){}
+			uart_cplt_lck = HAL_LOCKED;
+		}
+
+	}
+	protocol_mode = HAL_LOCKED;
+	return ok;
+}
+
 /* State Functions END-----------------------------------------------------------------*/
 
 /* Callback Functions BEGIN-----------------------------------------------------------------*/
+
 
 //Stops TIM3 once the DMA transfer is completed (this is called by the ADC DMA IRQ Handler)
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
@@ -960,6 +1049,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 	//Stops ADC Measurement and Timer
 	if(HAL_TIM_Base_Stop(&htim3) != HAL_OK)
 		Error_Handler();
+
+
 
 	if(HAL_ADC_Stop_DMA(&hadc3) != HAL_OK)
 		Error_Handler();
@@ -970,9 +1061,14 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 
 	entry_time = 0;
 
-	//Sends Data to Host
-	HAL_UART_Transmit_DMA(&huart3, (uint8_t*) adc_buffer, 2*ADC_BUFF_SIZE);
-
+	if(protocol_mode == HAL_LOCKED){
+		//Sends Data to Host
+		HAL_UART_Transmit_DMA(&huart3, (uint8_t*) adc_buffer, 2*(ADC_BUFF_SIZE));
+	}
+	else{
+		ring_buf_put(&ring_buffer_struct, adc_buffer, ADC_BUFF_SIZE);
+		protocol_run_lck = HAL_UNLOCKED;
+	}
 }
 
 //UART Receive callback (called by the UART DMA IRQ Handler)
@@ -980,6 +1076,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	uart_cplt_lck = HAL_UNLOCKED;
 }
 
+//UART Transmit callback (called by the UART DMA IRQ Handler)
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
+	if(protocol_mode == HAL_UNLOCKED) uart_cplt_lck = HAL_UNLOCKED;
+}
 
 void Switch_Cplt_Callback(DMA_HandleTypeDef *hdma)
 {
