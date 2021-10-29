@@ -54,7 +54,7 @@
 #define N_COMMANDS 208
 #define PROT_BUFF_SIZE 5*N_COMMANDS							//Buffer to receive the protocol
 #define PROT_DIVISION 26
-#define RING_BUFFER_SIZE (PROT_DIVISION)*(ADC_BUFF_SIZE) + 1	//Buffer to transmit data
+#define RING_BUFFER_SIZE (PROT_DIVISION)*(ADC_BUFF_SIZE)	//Buffer to transmit data
 
 // State Machine Constant
 #define ENTRY_STATE 0 	    /*defines entry state (allows for further change without
@@ -995,7 +995,7 @@ Actions_TypeDef prot_state(void){
   */
 Actions_TypeDef run_state(void){
 
-	uint16_t terminator = TERMINATOR;
+	//uint16_t terminator = TERMINATOR;
 
 	protocol_mode = HAL_UNLOCKED;
 	uart_cplt_lck = HAL_LOCKED;
@@ -1025,7 +1025,7 @@ Actions_TypeDef run_state(void){
 		//Transmit Data
 		if ((command+5)%(5*PROT_DIVISION) == 0){
 
-			ring_buf_put(&ring_buffer_struct, &terminator, 1);
+			//ring_buf_put(&ring_buffer_struct, &terminator, 1);
 			HAL_UART_Transmit_DMA(&huart3, (uint8_t*) uart_ring_buffer, 2*(RING_BUFFER_SIZE));
 			ring_buf_reset(&ring_buffer_struct);
 
