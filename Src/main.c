@@ -932,11 +932,21 @@ Actions_TypeDef meas_state(void){
   */
 Actions_TypeDef exc_state(void){
 
-	if (comm[1] != 0) //turn ON
-		HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2); //Starts PWM for Current Source (10 kHz)
+	switch(comm[1]){
 
-	else				//turn OFF
-		HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_2); //Stops PWM for Current Source
+		case 1: // 10kHz
+			__HAL_TIM_SET_PRESCALER(&htim8, 99);
+			HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2); //Starts PWM for Current Source (10 kHz)
+			break;
+
+		case 2: // 100kHz
+			__HAL_TIM_SET_PRESCALER(&htim8, 9);
+			HAL_TIM_PWM_Start(&htim8,TIM_CHANNEL_2); //Starts PWM for Current Source (100 kHz)
+			break;
+
+		default: //TURN-OFF
+			HAL_TIM_PWM_Stop(&htim8, TIM_CHANNEL_2); //Stops PWM for Current Source
+	}
 
 	return ok;
 }
