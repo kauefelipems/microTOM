@@ -47,7 +47,7 @@
 
 //UART Constants
 #define UART_TIMEOUT 1000 									//ms
-#define ADC_BUFF_SIZE 1024     								//Data Buffer
+#define ADC_BUFF_SIZE 1000     								//Data Buffer
 #define COMM_BUFF_SIZE 5  									//Command Buffer
 #define DIAG_BUFF_SIZE 8 									//Diagnostic Buffer
 #define TERMINATOR 2573     								//CR/LF Terminator in 16 bits
