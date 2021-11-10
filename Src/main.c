@@ -188,8 +188,7 @@ uint32_t entry_time = 0;
 uint32_t dac_value = __DAC_VOLTAGE2BIT(PGA_MIN_VOLTAGE);
 
 //Flow Locks
-HAL_LockTypeDef uart_rx_lck = HAL_LOCKED; //UART Receiving Complete Transfer
-HAL_LockTypeDef uart_tx_lck = HAL_LOCKED; //UART Transmission Complete Transfer
+HAL_LockTypeDef uart_cplt_lck = HAL_LOCKED; //UART Receiving Complete Transfer
 HAL_LockTypeDef protocol_run_lck = HAL_LOCKED; //UART Receiving Complete Transfer
 HAL_LockTypeDef protocol_mode = HAL_LOCKED; //UART Receiving Complete Transfer
 
@@ -779,9 +778,9 @@ Actions_TypeDef comm_wait_state(void){
 
 	HAL_StatusTypeDef uart_state = HAL_OK;
 
-	if (uart_rx_lck == HAL_UNLOCKED){	//DMA complete transfer
+	if (uart_cplt_lck == HAL_UNLOCKED){	//DMA complete transfer
 
-		uart_rx_lck = HAL_LOCKED;
+		uart_cplt_lck = HAL_LOCKED;
 
 		switch (comm[0]){
 			case 'G': return go_g;
@@ -909,27 +908,22 @@ Actions_TypeDef ch_sel_state(void){
 Actions_TypeDef meas_state(void){
 
 	//ADC Start (TRANSFER TO volt_vector USING DMA)
-	if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE) == HAL_OK){
+	if(HAL_ADC_Start_DMA(&hadc3, (uint32_t*) adc_buffer, ADC_BUFF_SIZE) == HAL_OK)
 		__HAL_TIM_SET_COUNTER(&htim4, 0);
 		HAL_TIM_Base_Start(&htim4);					//If not busy, starts the timer
-	}
 
 	if (__HAL_TIM_GET_COUNTER(&htim4) >= CHANNEL_STABILIZATION_TIME){ //Wait switching stabilization time
 
-		uart_tx_lck = HAL_LOCKED; //lock UART for transmission only
 		//Start TIM3 to trigger the ADC
 		if(HAL_TIM_Base_Start(&htim3) != HAL_OK)
 		  Error_Handler();
 
 		HAL_TIM_Base_Stop(&htim4); //stops counter
-
-		while(uart_tx_lck != HAL_UNLOCKED){} //if transmission completed
-
-		uart_tx_lck = HAL_LOCKED;
-
 		return ok;
 	}
-	return repeat;
+	else
+		return repeat;
+
 }
 
 /**
@@ -990,9 +984,9 @@ Actions_TypeDef diag_state(void){
 Actions_TypeDef prot_state(void){
 
 
-	if (uart_rx_lck == HAL_UNLOCKED){
+	if (uart_cplt_lck == HAL_UNLOCKED){
 		MX_DMA_Init();
-		uart_rx_lck = HAL_LOCKED;
+		uart_cplt_lck = HAL_LOCKED;
 		return ok;
 	}
 
@@ -1014,7 +1008,7 @@ Actions_TypeDef run_state(void){
 	//uint16_t terminator = TERMINATOR;
 
 	protocol_mode = HAL_UNLOCKED;
-	uart_tx_lck = HAL_LOCKED;
+	uart_cplt_lck = HAL_LOCKED;
 
 	for (uint16_t command = 0; command < PROT_BUFF_SIZE; command += 5){
 
@@ -1045,8 +1039,8 @@ Actions_TypeDef run_state(void){
 			HAL_UART_Transmit_DMA(&huart3, (uint8_t*) uart_ring_buffer, 2*(RING_BUFFER_SIZE));
 			ring_buf_reset(&ring_buffer_struct);
 
-			uart_tx_lck = HAL_LOCKED;
-			while(uart_tx_lck != HAL_UNLOCKED){}
+			while(uart_cplt_lck != HAL_UNLOCKED){}
+			uart_cplt_lck = HAL_LOCKED;
 		}
 
 	}
@@ -1089,12 +1083,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
 
 //UART Receive callback (called by the UART DMA IRQ Handler)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
-	uart_rx_lck = HAL_UNLOCKED;
+	uart_cplt_lck = HAL_UNLOCKED;
 }
 
 //UART Transmit callback (called by the UART DMA IRQ Handler)
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
-	uart_tx_lck = HAL_UNLOCKED;
+	if(protocol_mode == HAL_UNLOCKED) uart_cplt_lck = HAL_UNLOCKED;
 }
 
 void Switch_Cplt_Callback(DMA_HandleTypeDef *hdma)
